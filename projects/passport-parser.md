@@ -18,6 +18,12 @@ Postres cache
   - на повтор
   - 
 - Роли
+  - аутентификация
+
+- Логи
+  - Запущен background service
+  - Завершен.13.04.2025 1200 паспортов изменились значения на true
+
 
 
 
@@ -193,3 +199,130 @@ private async Task InsertBatchAsync((int passpSeries, int passpNumber)[] batch)
 
 ```
 
+### API
+
+1. Валидация
+
+2. Загрузка из csv во временную таблицу, сравнение и заполнение
+
+3. https://dev.to/0xog_pg/postgres-temporary-tables-a-guide-to-data-manipulation-2c7d#:~:text=A%20temporary%20table%20in%20Postgres,transaction%2C%20depending%20on%20their%20scope.
+
+4. Сравнение по серии и номеру
+
+5. Таблица "Дата"
+
+6. Background https://code-maze.com/aspnetcore-different-ways-to-run-background-tasks/
+
+   ```c#
+   1. public class SuperPars
+   
+        {
+   
+      ​    private readonly string _connectionString;
+   
+      ​    public SuperPars()
+   
+      ​    {
+   
+      ​      _connectionString = "server=localhost;username=postgres;database=passports_db;password=postgres";
+   
+      ​    }
+   
+      public async Task ProcessCsvData(string filePath)
+   
+      ​    {
+   
+      ​      using var connection = new NpgsqlConnection(_connectionString);
+   
+      ​      await connection.OpenAsync();
+   
+      ​      // Создаем временную таблицу
+   
+      ​      await connection.ExecuteAsync("CREATE TEMP TABLE temp_passports (series INT, number INT)");
+   
+      ​      // Импортируем данные из CSV-файла в временную таблицу
+   
+      ​      using (var writer = connection.BeginBinaryImport("COPY temp_passports (series, number) FROM STDIN (FORMAT BINARY)"))
+   
+      ​      {
+   
+      ​        using (var reader = new StreamReader(filePath))
+   
+      ​        {
+   
+      ​          while (!reader.EndOfStream)
+   
+      ​          {
+   
+      ​            var line = await reader.ReadLineAsync();
+   
+      ​            if(string.IsNullOrEmpty(line))
+   
+      ​              continue;
+   
+      ​            var parts = line.Split(',', StringSplitOptions.TrimEntries);
+   
+      ​            if(parts.Length != 2 || parts[0].Length != 4 || parts[1].Length != 6)
+   
+      ​              continue;
+   
+      ​            if (int.TryParse(parts[0], out int series) && int.TryParse(parts[1], out int number))
+   
+      ​            {
+   
+      ​              await writer.StartRowAsync();
+   
+      ​              writer.Write(series, NpgsqlTypes.NpgsqlDbType.Integer);
+   
+      ​              writer.Write(number, NpgsqlTypes.NpgsqlDbType.Integer);
+   
+      ​            }
+   
+      ​          }
+   
+      ​        }
+   
+      ​        await writer.CompleteAsync();
+   
+      ​      }
+   
+      ​      // Добавляем отсутствующие записи в основную таблицу
+   
+      ​      var insertQuery = @"
+   
+      ​      INSERT INTO passports (series, number, isactive)
+   
+      ​      SELECT series, number, TRUE
+   
+      ​      FROM temp_passports t
+   
+      ​      LEFT JOIN passports p ON p.series = t.series AND p.number = t.number
+   
+      ​      WHERE p.series IS NULL AND p.number IS NULL";
+   
+      ​      await connection.ExecuteAsync(insertQuery);
+   
+      ​      // Обновляем флаг isactive для записей, которых нет в CSV
+   
+      ​      var updateQuery = @"
+   
+      ​      UPDATE passports
+   
+      ​      SET isactive = TRUE
+   
+      ​      WHERE (series, number) NOT IN (SELECT series, number FROM temp_passports)";
+   
+      ​      await connection.ExecuteAsync(updateQuery);
+   
+      ​      // Удаляем временную таблицу
+   
+      ​      await connection.ExecuteAsync("DROP TABLE IF EXISTS temp_passports");
+   
+      ​    }
+   
+        }
+   
+   
+   ```
+
+   

@@ -1,2 +1,0 @@
-digit(4),digit(6)
-PASSP_SERIES,PASSP_NUMBER
